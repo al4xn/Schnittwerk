@@ -9,6 +9,8 @@
      PORT           port (default 3000)
      OWNER_NAME     the account name that receives ID #1 (default: first sign-up)
      DATA_DIR       where db.json lives (default ./data)  -> use a persistent disk!
+     UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN
+                    store all data in a free Upstash Redis instead (no disk needed)
      LOCK_MINUTES   base lock time after 3 wrong PINs (default 15)
    ============================================================================ */
 'use strict';
@@ -28,16 +30,54 @@ const RESERVED=['admin','owner','system','mod','support','schnittwerk','root','s
 /* codes shown to the owner only (the game itself only ships their hashes) */
 const CODES={"START": {"coins": 200}, "SCHNITT": {"coins": 500}, "GOLDRAUSCH": {"coins": 2500}, "WINTER": {"coins": 300}, "HAMMERZEIT": {"tool": "hammer"}, "SAEGEN": {"tool": "saw"}, "LASERBLICK": {"tool": "laser"}, "NEON": {"skin": "neon"}, "CYBER": {"skin": "pink"}, "GOLDKLINGE": {"skin": "gold"}, "PLASMA": {"skin": "plasma"}, "AURA": {"skin": "void"}, "INFERNO": {"skin": "inferno"}, "NORDLICHT": {"skin": "aurora"}};
 
-/* ------------------------------------------------------------------ storage */
-fs.mkdirSync(DATA_DIR,{recursive:true});
+/* ------------------------------------------------------------------ storage
+   Two backends:
+   - file  (default): DATA_DIR/db.json               -> needs a persistent disk
+   - remote: Upstash Redis over HTTPS (free tier)      -> set UPSTASH_REDIS_REST_URL and
+             UPSTASH_REDIS_REST_TOKEN. Then the server itself may be on a free host that
+             forgets its files (e.g. Render Free) and nothing is lost. */
+const KV_URL=(process.env.UPSTASH_REDIS_REST_URL||process.env.KV_REST_API_URL||'').replace(/\/+$/,'');
+const KV_TOKEN=process.env.UPSTASH_REDIS_REST_TOKEN||process.env.KV_REST_API_TOKEN||'';
+const REMOTE=!!(KV_URL&&KV_TOKEN);
 const FILE=path.join(DATA_DIR,'db.json');
+if(!REMOTE)fs.mkdirSync(DATA_DIR,{recursive:true});
 let db={v:1,users:{},names:{},tok:{},matches:{},seq:0};
-try{const j=JSON.parse(fs.readFileSync(FILE,'utf8'));if(j&&j.users)db=Object.assign(db,j);}catch(e){}
-let dirty=false;
+const written={};                         /* remote: last value written per key, only changes are sent */
+async function kv(cmds){
+  const r=await fetch(KV_URL+'/pipeline',{method:'POST',headers:{Authorization:'Bearer '+KV_TOKEN,'Content-Type':'application/json'},body:JSON.stringify(cmds)});
+  if(!r.ok)throw new Error('storage http '+r.status);
+  const j=await r.json();
+  return j.map(x=>{if(x&&x.error)throw new Error('storage '+x.error);return x?x.result:null;});
+}
+async function loadDb(){
+  if(!REMOTE){try{const j=JSON.parse(fs.readFileSync(FILE,'utf8'));if(j&&j.users)db=Object.assign(db,j);}catch(e){}return;}
+  const core=(await kv([['GET','sw:core']]))[0];
+  if(!core)return;
+  const c=JSON.parse(core);
+  db.names=c.names||{};db.tok=c.tok||{};db.matches=c.matches||{};db.seq=c.seq||0;written['sw:core']=core;
+  const ids=c.ids||[];
+  if(ids.length){
+    const vals=(await kv([['MGET'].concat(ids.map(i=>'sw:user:'+i))]))[0]||[];
+    ids.forEach((id,i)=>{if(vals[i]){db.users[id]=JSON.parse(vals[i]);written['sw:user:'+id]=vals[i];}});
+  }
+}
+let dirty=false,flushing=false;
 const touch=()=>{dirty=true;};
-function flush(){if(!dirty)return;dirty=false;try{const tmp=FILE+'.tmp';fs.writeFileSync(tmp,JSON.stringify(db));fs.renameSync(tmp,FILE);}catch(e){console.error('save failed',e.message);}}
-setInterval(flush,1500).unref();
-for(const s of ['SIGINT','SIGTERM'])process.on(s,()=>{flush();process.exit(0);});
+async function flush(force){
+  if((!dirty&&!force)||flushing)return;flushing=true;dirty=false;
+  try{
+    if(!REMOTE){const tmp=FILE+'.tmp';fs.writeFileSync(tmp,JSON.stringify(db));fs.renameSync(tmp,FILE);}
+    else{
+      const snap={'sw:core':JSON.stringify({v:1,names:db.names,tok:db.tok,matches:db.matches,seq:db.seq,ids:Object.keys(db.users)})};
+      for(const id in db.users)snap['sw:user:'+id]=JSON.stringify(db.users[id]);
+      const cmds=[];for(const k in snap)if(written[k]!==snap[k])cmds.push(['SET',k,snap[k]]);
+      if(cmds.length){await kv(cmds);for(const c of cmds)written[c[1]]=c[2];}
+    }
+  }catch(e){dirty=true;console.error('save failed',e.message);}
+  flushing=false;
+}
+setInterval(flush,REMOTE?15e3:1500).unref();
+for(const sg of ['SIGINT','SIGTERM'])process.on(sg,async()=>{await flush(true);process.exit(0);});
 
 /* ------------------------------------------------------------------ helpers */
 const now=()=>Date.now();
@@ -179,7 +219,7 @@ const activeMatch=u=>{const m=u.matchId&&db.matches[u.matchId];return m||null;};
 /* ------------------------------------------------------------------ API */
 async function api(req,res,url){
   const p=url.pathname.slice(5),M=req.method;
-  if(p==='ping'&&M==='GET')return send(res,200,{ok:true,game:'schnittwerk',v:VERSION,players:Object.keys(db.users).length,max:MAX_PLAYERS,time:now(),owner:!!db.users[1],ownerName:db.users[1]?db.users[1].name:''});
+  if(p==='ping'&&M==='GET')return send(res,200,{ok:true,game:'schnittwerk',v:VERSION,players:Object.keys(db.users).length,max:MAX_PLAYERS,time:now(),owner:!!db.users[1],ownerName:db.users[1]?db.users[1].name:'',storage:REMOTE?'remote':'file'});
   const ip=ipOf(req);
   let b={};
   if(M==='POST'){try{b=await readBody(req,p==='sync'||p==='save'?260e3:20e3);}catch(e){return fail(res,400,'bad_request');}}
@@ -396,4 +436,6 @@ const server=http.createServer(async(req,res)=>{
     return serveStatic(req,res,url);
   }catch(e){console.error(e);try{fail(res,500,'server');}catch(_){}}
 });
-server.listen(PORT,()=>console.log('Schnittwerk server '+VERSION+' on http://localhost:'+PORT+'  (data: '+DATA_DIR+')'+(OWNER_NAME?'  owner: '+OWNER_NAME:'')));
+loadDb().then(()=>{
+  server.listen(PORT,()=>console.log('Schnittwerk server '+VERSION+' on http://localhost:'+PORT+'  (data: '+(REMOTE?'Upstash Redis':DATA_DIR)+', '+Object.keys(db.users).length+' players)'+(OWNER_NAME?'  owner: '+OWNER_NAME:'')));
+}).catch(e=>{console.error('Could not load data: '+e.message);process.exit(1);});

@@ -1,0 +1,16 @@
+# Render Blueprint: kostenloser Server, Daten liegen in einer kostenlosen Upstash-Datenbank
+services:
+  - type: web
+    name: schnittwerk
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/ping
+    envVars:
+      - key: OWNER_NAME              # dein Spielername -> bekommt die ID #1
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL   # aus dem Upstash-Dashboard (REST API)
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
