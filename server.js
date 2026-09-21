@@ -36,8 +36,10 @@ const CODES={"START": {"coins": 200}, "SCHNITT": {"coins": 500}, "GOLDRAUSCH": {
    - remote: Upstash Redis over HTTPS (free tier)      -> set UPSTASH_REDIS_REST_URL and
              UPSTASH_REDIS_REST_TOKEN. Then the server itself may be on a free host that
              forgets its files (e.g. Render Free) and nothing is lost. */
-const KV_URL=(process.env.UPSTASH_REDIS_REST_URL||process.env.KV_REST_API_URL||'').replace(/\/+$/,'');
-const KV_TOKEN=process.env.UPSTASH_REDIS_REST_TOKEN||process.env.KV_REST_API_TOKEN||'';
+const cleanEnv=v=>String(v||'').trim().replace(/^["'\s]+|["'\s]+$/g,'');   /* forgives quotes / spaces pasted with the value */
+let KV_URL=cleanEnv(process.env.UPSTASH_REDIS_REST_URL||process.env.KV_REST_API_URL).replace(/\/+$/,'');
+if(KV_URL&&!/^https?:\/\//i.test(KV_URL))KV_URL='https://'+KV_URL;
+const KV_TOKEN=cleanEnv(process.env.UPSTASH_REDIS_REST_TOKEN||process.env.KV_REST_API_TOKEN);
 const REMOTE=!!(KV_URL&&KV_TOKEN);
 const FILE=path.join(DATA_DIR,'db.json');
 if(!REMOTE)fs.mkdirSync(DATA_DIR,{recursive:true});
@@ -45,6 +47,7 @@ let db={v:1,users:{},names:{},tok:{},matches:{},seq:0};
 const written={};                         /* remote: last value written per key, only changes are sent */
 async function kv(cmds){
   const r=await fetch(KV_URL+'/pipeline',{method:'POST',headers:{Authorization:'Bearer '+KV_TOKEN,'Content-Type':'application/json'},body:JSON.stringify(cmds)});
+  if(r.status===401||r.status===403)throw new Error('Upstash rejects the credentials (HTTP '+r.status+'). Check UPSTASH_REDIS_REST_TOKEN: it must be the read-write REST token of the database '+new URL(KV_URL).host+' (from the Redis tab, not QStash), pasted without quotes. Token length seen: '+KV_TOKEN.length);
   if(!r.ok)throw new Error('storage http '+r.status);
   const j=await r.json();
   return j.map(x=>{if(x&&x.error)throw new Error('storage '+x.error);return x?x.result:null;});
