@@ -8,9 +8,9 @@ services:
     startCommand: node server.js
     healthCheckPath: /api/ping
     envVars:
-      - key: PLAYER_NAME
-        value: Alan
+      - key: OWNER_NAME
+        value: Alan              # dein Spielername -> bekommt die ID #1
       - key: UPSTASH_REDIS_REST_URL
-        value: https://pretty-prawn-288825.upstash.io
+        value: https://pretty-prawn-288825.upstash.io   # aus dem Upstash-Dashboard (REST API)
       - key: UPSTASH_REDIS_REST_TOKEN
         value: gQAAAAABgG5AAIgcD14NWYwDdMmMiWNDY0OGVmYjg1N2I2NzVjMjFjZjJjRiMw
