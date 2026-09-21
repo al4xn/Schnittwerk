@@ -7,10 +7,13 @@ services:
     buildCommand: npm install
     startCommand: node server.js
     healthCheckPath: /api/ping
-    envVars:
-      - key: Alan              # dein Spielername -> bekommt die ID #1
+      envVars:
+      - key: PLAYER_NAME
+        value: Alan
         sync: false
-      - key: https://pretty-prawn-288825.upstash.io  # aus dem Upstash-Dashboard (REST API)
+      - key: UPSTASH_REDIS_REST_URL
+        value: https://pretty-prawn-288825.upstash.io
         sync: false
-      - key: gQAAAAAABGg5AAIgcDI4NWYwODdmMmIwNDY0OGVmYjg1N2IzNGVmM2FjZjRiMw
+      - key: UPSTASH_REDIS_REST_TOKEN
+        value: gQAAAAABgG5AAIgcD14NWYwDdMmMiWNDY0OGVmYjg1N2I2NzVjMjFjZjJjRiMw
         sync: false
