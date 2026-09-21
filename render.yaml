@@ -1,4 +1,3 @@
-# Render Blueprint: kostenloser Server, Daten liegen in einer kostenlosen Upstash-Datenbank
 services:
   - type: web
     name: schnittwerk
