@@ -1,4 +1,3 @@
-# Render Blueprint: kostenloser Server, Daten liegen in einer kostenlosen Upstash-Datenbank
 services:
   - type: web
     name: schnittwerk
@@ -7,7 +6,7 @@ services:
     buildCommand: npm install
     startCommand: node server.js
     healthCheckPath: /api/ping
-      envVars:
+    envVars:
       - key: PLAYER_NAME
         value: Alan
         sync: false
